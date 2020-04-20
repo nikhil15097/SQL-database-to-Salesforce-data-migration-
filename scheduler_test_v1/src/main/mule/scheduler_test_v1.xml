@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:secure-properties="http://www.mulesoft.org/schema/mule/secure-properties" xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:salesforce="http://www.mulesoft.org/schema/mule/salesforce"
+	xmlns:batch="http://www.mulesoft.org/schema/mule/batch" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:db="http://www.mulesoft.org/schema/mule/db" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/batch http://www.mulesoft.org/schema/mule/batch/current/mule-batch.xsd
+http://www.mulesoft.org/schema/mule/salesforce http://www.mulesoft.org/schema/mule/salesforce/current/mule-salesforce.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/secure-properties http://www.mulesoft.org/schema/mule/secure-properties/current/mule-secure-properties.xsd">
+	<db:config name="Database_Config" doc:name="Database Config" doc:id="4a8bfb93-4c1c-4784-9003-7533bffa8d6f" >
+		<db:mssql-connection host="${secure::db.host}" user="${secure::db.username}" password="${secure::db.password}" databaseName="Vishnu2020" port="${secure::db.port}"/>
+	</db:config>
+	<salesforce:sfdc-config name="Salesforce_Config" doc:name="Salesforce Config" doc:id="cf2f03e4-ba14-4523-aad3-30305ab852ab" >
+		<salesforce:cached-basic-connection username="vbatchu@huronconsultinggroup.com.dev1" password="Huron!23" securityToken="BGGhq3TxCF0E9ppZT0uE8giyY" url="https://test.salesforce.com/services/Soap/u/46.0">
+			<salesforce:advanced-reconnection-params />
+		</salesforce:cached-basic-connection>
+	</salesforce:sfdc-config>
+	<secure-properties:config name="Secure_Properties_Config" doc:name="Secure Properties Config" doc:id="71442f31-c955-44fd-91fd-01548415d7ae" file="c8.yaml" key="mule" >
+		<secure-properties:encrypt algorithm="Blowfish" />
+	</secure-properties:config>
+	<flow name="scheduler_testFlow" doc:id="3b5fa3a4-d350-4a9f-a3af-363211e4a7b3" >
+		<scheduler doc:name="Scheduler" doc:id="49512021-1cb1-4d2b-a36a-a9b789b47beb" >
+			<scheduling-strategy >
+				<fixed-frequency frequency="60" timeUnit="SECONDS"/>
+			</scheduling-strategy>
+		</scheduler>
+		<db:select doc:name="Select" doc:id="99bde9e9-97b2-4de9-a8b2-541872ef585b" config-ref="Database_Config">
+			<db:sql >SELECT TOP (10) [Id]
+      ,[Name]
+      ,[Email]
+      ,[Phone]
+  FROM Contacts</db:sql>
+		</db:select>
+		<ee:transform doc:name="Transform Message" doc:id="f640c3a0-9f3c-494b-bed7-af9d037cf766" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/java
+---
+payload]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<logger level="INFO" doc:name="Logger" doc:id="a8e5d6f3-308c-4488-b6f5-07db07f2970f" message='"Scheduler got envoked"'/>
+		<batch:job jobName="scheduler_testBatch_Job" doc:id="568933ae-b3bb-4ac8-ac1a-56c40d57edfc" >
+			<batch:process-records >
+				<batch:step name="Batch_Step" doc:id="ea4f28f6-23f1-4126-a694-ed3efe043f1a" >
+					<ee:transform doc:name="Transform Message" doc:id="5ba88499-eb76-4655-9a48-0d4522b4a234" >
+						<ee:message >
+							<ee:set-payload ><![CDATA[%dw 2.0
+output application/java
+---
+{
+	"LastName":payload.Name,	
+	"Member_ID__c": payload.Id as String,
+	"RecordtypeId": p('sf.memberRecordTypeId')	
+}]]></ee:set-payload>
+						</ee:message>
+					</ee:transform>
+					<batch:aggregator doc:name="Batch Aggregator" doc:id="fb01cd8d-54fb-49b2-a2e4-634c75085fd3" size="10">
+						<salesforce:upsert-bulk doc:name="Upsert bulk" doc:id="f4798777-a653-4fc2-a5fd-196a7e7074ce" config-ref="Salesforce_Config" type="Account" externalIdFieldName="Member_ID__c"/>
+						<logger level="INFO" doc:name="Logger" doc:id="637aa274-5314-4de0-bb05-74c0feaf16ff" />
+					</batch:aggregator>
+				</batch:step>
+			</batch:process-records>
+			<batch:on-complete >
+				<logger level="INFO" doc:name="Logger" doc:id="e10a351b-e9a4-49ef-aa45-2f13a3666cb5" message='"Contact Upserted Successfully"'/>
+			</batch:on-complete>
+		</batch:job>
+		<error-handler >
+			<on-error-propagate enableNotifications="true" logException="true" doc:name="On Error Propagate" doc:id="62944d0d-f31b-4a8e-b16a-fccaaf2dceae" type="DB:QUERY_EXECUTION">
+				<flow-ref doc:name="send_email-db-failure-Sub_Flow" doc:id="5b2bcf7c-92d0-42fa-b779-a3b5cd866b40" name="send_email-db-failure-Sub_Flow"/>
+			</on-error-propagate>
+		</error-handler>
+	</flow>
+</mule>
